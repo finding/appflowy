@@ -1,140 +1,87 @@
 // @generated automatically by Diesel CLI.
 
 diesel::table! {
-    app_table (id) {
+    af_collab_metadata (object_id) {
+        object_id -> Text,
+        updated_at -> BigInt,
+        prev_sync_state_vector -> Binary,
+        collab_type -> Integer,
+    }
+}
+
+diesel::table! {
+    chat_local_setting_table (chat_id) {
+        chat_id -> Text,
+        local_model_path -> Text,
+        local_model_name -> Text,
+    }
+}
+
+diesel::table! {
+    chat_message_table (message_id) {
+        message_id -> BigInt,
+        chat_id -> Text,
+        content -> Text,
+        created_at -> BigInt,
+        author_type -> BigInt,
+        author_id -> Text,
+        reply_message_id -> Nullable<BigInt>,
+        metadata -> Nullable<Text>,
+    }
+}
+
+diesel::table! {
+    chat_table (chat_id) {
+        chat_id -> Text,
+        created_at -> BigInt,
+        name -> Text,
+        local_files -> Text,
+        metadata -> Text,
+        local_enabled -> Bool,
+        sync_to_cloud -> Bool,
+    }
+}
+
+diesel::table! {
+    collab_snapshot (id) {
         id -> Text,
+        object_id -> Text,
+        title -> Text,
+        desc -> Text,
+        collab_type -> Text,
+        timestamp -> BigInt,
+        data -> Binary,
+    }
+}
+
+diesel::table! {
+    upload_file_part (upload_id, e_tag) {
+        upload_id -> Text,
+        e_tag -> Text,
+        part_num -> Integer,
+    }
+}
+
+diesel::table! {
+    upload_file_table (workspace_id, file_id, parent_dir) {
         workspace_id -> Text,
-        name -> Text,
-        desc -> Text,
-        color_style -> Binary,
-        last_view_id -> Nullable<Text>,
-        modified_time -> BigInt,
-        create_time -> BigInt,
-        version -> BigInt,
-        is_trash -> Bool,
+        file_id -> Text,
+        parent_dir -> Text,
+        local_file_path -> Text,
+        content_type -> Text,
+        chunk_size -> Integer,
+        num_chunk -> Integer,
+        upload_id -> Text,
+        created_at -> BigInt,
+        is_finish -> Bool,
     }
 }
 
 diesel::table! {
-    document_rev_snapshot (snapshot_id) {
-        snapshot_id -> Text,
-        object_id -> Text,
-        rev_id -> BigInt,
-        base_rev_id -> BigInt,
-        timestamp -> BigInt,
-        data -> Binary,
-    }
-}
-
-diesel::table! {
-    document_rev_table (id) {
+    user_data_migration_records (id) {
         id -> Integer,
-        document_id -> Text,
-        base_rev_id -> BigInt,
-        rev_id -> BigInt,
-        data -> Binary,
-        state -> Integer,
-    }
-}
-
-diesel::table! {
-    folder_rev_snapshot (snapshot_id) {
-        snapshot_id -> Text,
-        object_id -> Text,
-        rev_id -> BigInt,
-        base_rev_id -> BigInt,
-        timestamp -> BigInt,
-        data -> Binary,
-    }
-}
-
-diesel::table! {
-    grid_block_index_table (row_id) {
-        row_id -> Text,
-        block_id -> Text,
-    }
-}
-
-diesel::table! {
-    grid_meta_rev_table (id) {
-        id -> Integer,
-        object_id -> Text,
-        base_rev_id -> BigInt,
-        rev_id -> BigInt,
-        data -> Binary,
-        state -> Integer,
-    }
-}
-
-diesel::table! {
-    grid_rev_snapshot (snapshot_id) {
-        snapshot_id -> Text,
-        object_id -> Text,
-        rev_id -> BigInt,
-        base_rev_id -> BigInt,
-        timestamp -> BigInt,
-        data -> Binary,
-    }
-}
-
-diesel::table! {
-    grid_rev_table (id) {
-        id -> Integer,
-        object_id -> Text,
-        base_rev_id -> BigInt,
-        rev_id -> BigInt,
-        data -> Binary,
-        state -> Integer,
-    }
-}
-
-diesel::table! {
-    grid_view_rev_table (id) {
-        id -> Integer,
-        object_id -> Text,
-        base_rev_id -> BigInt,
-        rev_id -> BigInt,
-        data -> Binary,
-        state -> Integer,
-    }
-}
-
-diesel::table! {
-    kv_table (key) {
-        key -> Text,
-        value -> Binary,
-    }
-}
-
-diesel::table! {
-    rev_snapshot (id) {
-        id -> Integer,
-        object_id -> Text,
-        rev_id -> BigInt,
-        data -> Binary,
-    }
-}
-
-diesel::table! {
-    rev_table (id) {
-        id -> Integer,
-        doc_id -> Text,
-        base_rev_id -> BigInt,
-        rev_id -> BigInt,
-        data -> Binary,
-        state -> Integer,
-        ty -> Integer,
-    }
-}
-
-diesel::table! {
-    trash_table (id) {
-        id -> Text,
-        name -> Text,
-        desc -> Text,
-        modified_time -> BigInt,
-        create_time -> BigInt,
-        ty -> Integer,
+        migration_name -> Text,
+        executed_at -> Timestamp,
     }
 }
 
@@ -142,56 +89,54 @@ diesel::table! {
     user_table (id) {
         id -> Text,
         name -> Text,
-        token -> Text,
-        email -> Text,
         workspace -> Text,
         icon_url -> Text,
+        openai_key -> Text,
+        token -> Text,
+        email -> Text,
+        auth_type -> Integer,
+        encryption_type -> Text,
+        stability_ai_key -> Text,
+        updated_at -> BigInt,
+        ai_model -> Text,
     }
 }
 
 diesel::table! {
-    view_table (id) {
+    user_workspace_table (id) {
         id -> Text,
-        belong_to_id -> Text,
         name -> Text,
-        desc -> Text,
-        modified_time -> BigInt,
-        create_time -> BigInt,
-        thumbnail -> Text,
-        view_type -> Integer,
-        version -> BigInt,
-        is_trash -> Bool,
-        ext_data -> Text,
+        uid -> BigInt,
+        created_at -> BigInt,
+        database_storage_id -> Text,
+        icon -> Text,
+        member_count -> BigInt,
+        role -> Nullable<Integer>,
     }
 }
 
 diesel::table! {
-    workspace_table (id) {
-        id -> Text,
+    workspace_members_table (email, workspace_id) {
+        email -> Text,
+        role -> Integer,
         name -> Text,
-        desc -> Text,
-        modified_time -> BigInt,
-        create_time -> BigInt,
-        user_id -> Text,
-        version -> BigInt,
+        avatar_url -> Nullable<Text>,
+        uid -> BigInt,
+        workspace_id -> Text,
+        updated_at -> Timestamp,
     }
 }
 
 diesel::allow_tables_to_appear_in_same_query!(
-    app_table,
-    document_rev_snapshot,
-    document_rev_table,
-    folder_rev_snapshot,
-    grid_block_index_table,
-    grid_meta_rev_table,
-    grid_rev_snapshot,
-    grid_rev_table,
-    grid_view_rev_table,
-    kv_table,
-    rev_snapshot,
-    rev_table,
-    trash_table,
-    user_table,
-    view_table,
-    workspace_table,
+  af_collab_metadata,
+  chat_local_setting_table,
+  chat_message_table,
+  chat_table,
+  collab_snapshot,
+  upload_file_part,
+  upload_file_table,
+  user_data_migration_records,
+  user_table,
+  user_workspace_table,
+  workspace_members_table,
 );
