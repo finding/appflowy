@@ -1,15 +1,9 @@
-[tasks.tauri_build]
-description = "Build the Tauri backend & Run Code Generation"
-script = ["""
-    cd appflowy_tauri/src-tauri
-    cargo build
-    """]
-script_runner = "@shell"
 
 [tasks.tauri_dev]
+env = { RUST_LOG = "debug" }
 script = ["""
     cd appflowy_tauri
-    npm run tauri dev
+    npm run tauri:dev
     """]
 script_runner = "@shell"
 
@@ -26,7 +20,7 @@ run_task = { name = [
 [tasks.rm_tauri_generated_protobuf_files]
 private = true
 script = ["""
-  protobuf_file_paths = glob_array ${TAURI_BACKEND_SERVICE_PATH}/classes
+  protobuf_file_paths = glob_array ${TAURI_BACKEND_SERVICE_PATH}/models
   if not array_is_empty ${protobuf_file_paths}
     echo Remove generated protobuf files:
     for path in ${protobuf_file_paths}

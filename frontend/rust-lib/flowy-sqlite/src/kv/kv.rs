@@ -1,187 +1,181 @@
-use crate::kv::schema::{kv_table, kv_table::dsl, KV_SQL};
-use crate::sqlite::{DBConnection, Database, PoolConfig};
+use std::path::Path;
+
 use ::diesel::{query_dsl::*, ExpressionMethods};
-use diesel::{Connection, SqliteConnection};
-use lazy_static::lazy_static;
-use std::{path::Path, sync::RwLock};
+use anyhow::anyhow;
+use diesel::sql_query;
+use serde::de::DeserializeOwned;
+use serde::Serialize;
 
-macro_rules! impl_get_func {
-    (
-        $func_name:ident,
-        $get_method:ident=>$target:ident
-    ) => {
-        #[allow(dead_code)]
-        pub fn $func_name(k: &str) -> Option<$target> {
-            match KV::get(k) {
-                Ok(item) => item.$get_method,
-                Err(_) => None,
-            }
-        }
-    };
-}
+use crate::kv::schema::{kv_table, kv_table::dsl, KV_SQL};
+use crate::sqlite_impl::{Database, PoolConfig};
 
-macro_rules! impl_set_func {
-    ($func_name:ident,$set_method:ident,$key_type:ident) => {
-        #[allow(dead_code)]
-        pub fn $func_name(key: &str, value: $key_type) {
-            let mut item = KeyValue::new(key);
-            item.$set_method = Some(value);
-            match KV::set(item) {
-                Ok(_) => {}
-                Err(e) => {
-                    tracing::error!("{:?}", e)
-                }
-            };
-        }
-    };
-}
-const DB_NAME: &str = "kv.db";
-lazy_static! {
-    static ref KV_HOLDER: RwLock<KV> = RwLock::new(KV::new());
-}
+const DB_NAME: &str = "cache.db";
 
-pub struct KV {
-    database: Option<Database>,
+/// [KVStorePreferences] uses a sqlite database to store key value pairs.
+/// Most of the time, it used to storage AppFlowy configuration.
+#[derive(Clone)]
+pub struct KVStorePreferences {
+  database: Option<Database>,
 }
-
-impl KV {
-    fn new() -> Self {
-        KV { database: None }
+impl KVStorePreferences {
+  #[tracing::instrument(level = "trace", err)]
+  pub fn new(root: &str) -> Result<Self, anyhow::Error> {
+    if !Path::new(root).exists() {
+      return Err(anyhow!("Init StorePreferences failed. {} not exists", root));
     }
 
-    fn set(value: KeyValue) -> Result<(), String> {
-        // tracing::trace!("[KV]: set value: {:?}", value);
-        let _ = diesel::replace_into(kv_table::table)
-            .values(&value)
-            .execute(&*(get_connection()?))
-            .map_err(|e| format!("KV set error: {:?}", e))?;
+    let pool_config = PoolConfig::default();
+    let database = Database::new(root, DB_NAME, pool_config).unwrap();
+    let mut conn = database.get_connection().unwrap();
+    sql_query(KV_SQL).execute(&mut conn).unwrap();
 
+    tracing::trace!("Init StorePreferences with path: {}", root);
+    Ok(Self {
+      database: Some(database),
+    })
+  }
+
+  /// Set a string value of a key
+  pub fn set_str<T: ToString>(&self, key: &str, value: T) {
+    let _ = self.set_key_value(key, Some(value.to_string()));
+  }
+
+  /// Set a bool value of a key
+  pub fn set_bool(&self, key: &str, value: bool) -> Result<(), anyhow::Error> {
+    self.set_key_value(key, Some(value.to_string()))
+  }
+
+  /// Set a object that implements [Serialize] trait of a key
+  pub fn set_object<T: Serialize>(&self, key: &str, value: &T) -> Result<(), anyhow::Error> {
+    let value = serde_json::to_string(value)?;
+    self.set_key_value(key, Some(value))?;
+    Ok(())
+  }
+
+  /// Set a i64 value of a key
+  pub fn set_i64(&self, key: &str, value: i64) -> Result<(), anyhow::Error> {
+    self.set_key_value(key, Some(value.to_string()))
+  }
+
+  /// Get a string value of a key
+  pub fn get_str(&self, key: &str) -> Option<String> {
+    self.get_key_value(key).and_then(|kv| kv.value)
+  }
+
+  /// Get a bool value of a key
+  pub fn get_bool_or_default(&self, key: &str) -> bool {
+    self
+      .get_key_value(key)
+      .and_then(|kv| kv.value)
+      .and_then(|v| v.parse::<bool>().ok())
+      .unwrap_or(false)
+  }
+
+  pub fn get_bool(&self, key: &str) -> Option<bool> {
+    self
+      .get_key_value(key)
+      .and_then(|kv| kv.value)
+      .and_then(|v| v.parse::<bool>().ok())
+  }
+
+  /// Get a i64 value of a key
+  pub fn get_i64(&self, key: &str) -> Option<i64> {
+    self
+      .get_key_value(key)
+      .and_then(|kv| kv.value)
+      .and_then(|v| v.parse::<i64>().ok())
+  }
+
+  /// Get a object that implements [DeserializeOwned] trait of a key
+  pub fn get_object<T: DeserializeOwned>(&self, key: &str) -> Option<T> {
+    self
+      .get_str(key)
+      .and_then(|v| serde_json::from_str(&v).ok())
+  }
+
+  pub fn remove(&self, key: &str) {
+    if let Some(mut conn) = self
+      .database
+      .as_ref()
+      .and_then(|database| database.get_connection().ok())
+    {
+      let sql = dsl::kv_table.filter(kv_table::key.eq(key));
+      let _ = diesel::delete(sql).execute(&mut *conn);
+    }
+  }
+
+  fn set_key_value(&self, key: &str, value: Option<String>) -> Result<(), anyhow::Error> {
+    match self
+      .database
+      .as_ref()
+      .and_then(|database| database.get_connection().ok())
+    {
+      None => Err(anyhow!("StorePreferences is not initialized")),
+      Some(mut conn) => {
+        diesel::replace_into(kv_table::table)
+          .values(KeyValue {
+            key: key.to_string(),
+            value,
+          })
+          .execute(&mut *conn)?;
         Ok(())
+      },
     }
+  }
 
-    fn get(key: &str) -> Result<KeyValue, String> {
-        let conn = get_connection()?;
-        let value = dsl::kv_table
-            .filter(kv_table::key.eq(key))
-            .first::<KeyValue>(&*conn)
-            .map_err(|e| format!("KV get error: {:?}", e))?;
-
-        Ok(value)
-    }
-
-    #[allow(dead_code)]
-    pub fn remove(key: &str) -> Result<(), String> {
-        // tracing::debug!("remove key: {}", key);
-        let conn = get_connection()?;
-        let sql = dsl::kv_table.filter(kv_table::key.eq(key));
-        let _ = diesel::delete(sql)
-            .execute(&*conn)
-            .map_err(|e| format!("KV remove error: {:?}", e))?;
-        Ok(())
-    }
-
-    #[tracing::instrument(level = "trace", err)]
-    pub fn init(root: &str) -> Result<(), String> {
-        if !Path::new(root).exists() {
-            return Err(format!("Init KVStore failed. {} not exists", root));
-        }
-
-        let pool_config = PoolConfig::default();
-        let database = Database::new(root, DB_NAME, pool_config).unwrap();
-        let conn = database.get_connection().unwrap();
-        SqliteConnection::execute(&*conn, KV_SQL).unwrap();
-
-        let mut store = KV_HOLDER
-            .write()
-            .map_err(|e| format!("KVStore write failed: {:?}", e))?;
-        tracing::trace!("Init kv with path: {}", root);
-        store.database = Some(database);
-
-        Ok(())
-    }
-
-    pub fn get_bool(key: &str) -> bool {
-        match KV::get(key) {
-            Ok(item) => item.bool_value.unwrap_or(false),
-            Err(_) => false,
-        }
-    }
-
-    impl_set_func!(set_str, str_value, String);
-
-    impl_set_func!(set_bool, bool_value, bool);
-
-    impl_set_func!(set_int, int_value, i64);
-
-    impl_set_func!(set_float, float_value, f64);
-
-    impl_get_func!(get_str,str_value=>String);
-
-    impl_get_func!(get_int,int_value=>i64);
-
-    impl_get_func!(get_float,float_value=>f64);
-}
-
-fn get_connection() -> Result<DBConnection, String> {
-    match KV_HOLDER.read() {
-        Ok(store) => {
-            let conn = store
-                .database
-                .as_ref()
-                .expect("KVStore is not init")
-                .get_connection()
-                .map_err(|e| format!("KVStore error: {:?}", e))?;
-            Ok(conn)
-        }
-        Err(e) => {
-            let msg = format!("KVStore get connection failed: {:?}", e);
-            tracing::error!("{:?}", msg);
-            Err(msg)
-        }
-    }
+  fn get_key_value(&self, key: &str) -> Option<KeyValue> {
+    let mut conn = self.database.as_ref().unwrap().get_connection().ok()?;
+    dsl::kv_table
+      .filter(kv_table::key.eq(key))
+      .first::<KeyValue>(&mut *conn)
+      .ok()
+  }
 }
 
 #[derive(Clone, Debug, Default, Queryable, Identifiable, Insertable, AsChangeset)]
-#[table_name = "kv_table"]
-#[primary_key(key)]
+#[diesel(table_name = kv_table)]
+#[diesel(primary_key(key))]
 pub struct KeyValue {
-    pub key: String,
-    pub str_value: Option<String>,
-    pub int_value: Option<i64>,
-    pub float_value: Option<f64>,
-    pub bool_value: Option<bool>,
-}
-
-impl KeyValue {
-    pub fn new(key: &str) -> Self {
-        KeyValue {
-            key: key.to_string(),
-            ..Default::default()
-        }
-    }
+  pub key: String,
+  pub value: Option<String>,
 }
 
 #[cfg(test)]
 mod tests {
-    use crate::kv::KV;
+  use serde::{Deserialize, Serialize};
+  use tempfile::TempDir;
 
-    #[test]
-    fn kv_store_test() {
-        let dir = "./temp/";
-        if !std::path::Path::new(dir).exists() {
-            std::fs::create_dir_all(dir).unwrap();
-        }
+  use crate::kv::KVStorePreferences;
 
-        KV::init(dir).unwrap();
+  #[derive(Serialize, Deserialize, Clone, Eq, PartialEq, Debug)]
+  struct Person {
+    name: String,
+    age: i32,
+  }
 
-        KV::set_str("1", "hello".to_string());
-        assert_eq!(KV::get_str("1").unwrap(), "hello");
+  #[test]
+  fn kv_store_test() {
+    let tempdir = TempDir::new().unwrap();
+    let path = tempdir.into_path();
+    let store = KVStorePreferences::new(path.to_str().unwrap()).unwrap();
 
-        assert_eq!(KV::get_str("2"), None);
+    store.set_str("1", "hello".to_string());
+    assert_eq!(store.get_str("1").unwrap(), "hello");
+    assert_eq!(store.get_str("2"), None);
 
-        KV::set_bool("1", true);
-        assert!(KV::get_bool("1"));
+    store.set_bool("1", true).unwrap();
+    assert!(store.get_bool_or_default("1"));
+    assert!(!store.get_bool_or_default("2"));
 
-        assert!(!KV::get_bool("2"));
-    }
+    store.set_i64("1", 1).unwrap();
+    assert_eq!(store.get_i64("1").unwrap(), 1);
+    assert_eq!(store.get_i64("2"), None);
+
+    let person = Person {
+      name: "nathan".to_string(),
+      age: 30,
+    };
+    store.set_object("1", &person.clone()).unwrap();
+    assert_eq!(store.get_object::<Person>("1").unwrap(), person);
+  }
 }

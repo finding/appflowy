@@ -1,33 +1,40 @@
 use flowy_derive::ProtoBuf_Enum;
 use flowy_notification::NotificationBuilder;
-const OBSERVABLE_CATEGORY: &str = "User";
 
-#[derive(ProtoBuf_Enum, Debug)]
+use crate::entities::AuthStateChangedPB;
+
+const USER_OBSERVABLE_SOURCE: &str = "User";
+
+#[derive(ProtoBuf_Enum, Debug, Default)]
 pub(crate) enum UserNotification {
-    Unknown = 0,
-    UserAuthChanged = 1,
-    UserProfileUpdated = 2,
-    UserUnauthorized = 3,
-    UserWsConnectStateChanged = 4,
-    UserSignIn = 5,
-}
-
-impl std::default::Default for UserNotification {
-    fn default() -> Self {
-        UserNotification::Unknown
-    }
+  #[default]
+  Unknown = 0,
+  UserAuthStateChanged = 1,
+  DidUpdateUserProfile = 2,
+  DidUpdateUserWorkspaces = 3,
+  DidUpdateCloudConfig = 4,
+  DidUpdateUserWorkspace = 5,
+  DidUpdateAISetting = 6,
 }
 
 impl std::convert::From<UserNotification> for i32 {
-    fn from(notification: UserNotification) -> Self {
-        notification as i32
-    }
+  fn from(notification: UserNotification) -> Self {
+    notification as i32
+  }
 }
 
+#[tracing::instrument(level = "trace")]
 pub(crate) fn send_notification(id: &str, ty: UserNotification) -> NotificationBuilder {
-    NotificationBuilder::new(id, ty, OBSERVABLE_CATEGORY)
+  NotificationBuilder::new(id, ty, USER_OBSERVABLE_SOURCE)
 }
 
-pub(crate) fn send_sign_in_notification() -> NotificationBuilder {
-    NotificationBuilder::new("", UserNotification::UserSignIn, OBSERVABLE_CATEGORY)
+#[tracing::instrument(level = "trace")]
+pub(crate) fn send_auth_state_notification(payload: AuthStateChangedPB) {
+  NotificationBuilder::new(
+    "auth_state_change_notification",
+    UserNotification::UserAuthStateChanged,
+    USER_OBSERVABLE_SOURCE,
+  )
+  .payload(payload)
+  .send()
 }
