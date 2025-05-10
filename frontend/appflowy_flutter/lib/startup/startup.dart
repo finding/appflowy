@@ -84,6 +84,9 @@ class FlowyRunner {
       IntegrationTestHelper.rustEnvsBuilder = rustEnvsBuilder;
     }
 
+    // Disable the log in test mode
+    Log.shared.disableLog = mode.isTest;
+
     // Clear and dispose tasks from previous AppLaunch
     if (getIt.isRegistered(instance: AppLauncher)) {
       await getIt<AppLauncher>().dispose();
@@ -118,7 +121,6 @@ class FlowyRunner {
         // don't catch errors in test mode
         if (!mode.isUnitTest && !mode.isIntegrationTest)
           const PlatformErrorCatcherTask(),
-        if (!mode.isUnitTest) const InitSentryTask(),
         // this task should be second task, for handling memory leak.
         // there's a flag named _enable in memory_leak_detector.dart. If it's false, the task will be ignored.
         MemoryLeakDetectorTask(),

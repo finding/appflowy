@@ -36,17 +36,12 @@ PODS:
   - ReachabilitySwift (5.2.4)
   - screen_retriever_macos (0.0.1):
     - FlutterMacOS
-  - Sentry/HybridSDK (8.35.1)
-  - sentry_flutter (8.8.0):
-    - Flutter
-    - FlutterMacOS
-    - Sentry/HybridSDK (= 8.35.1)
   - share_plus (0.0.1):
     - FlutterMacOS
   - shared_preferences_foundation (0.0.1):
     - Flutter
     - FlutterMacOS
-  - Sparkle (2.6.4)
+  - Sparkle (2.7.0)
   - sqflite_darwin (0.0.4):
     - Flutter
     - FlutterMacOS
@@ -77,7 +72,6 @@ DEPENDENCIES:
   - package_info_plus (from `Flutter/ephemeral/.symlinks/plugins/package_info_plus/macos`)
   - path_provider_foundation (from `Flutter/ephemeral/.symlinks/plugins/path_provider_foundation/darwin`)
   - screen_retriever_macos (from `Flutter/ephemeral/.symlinks/plugins/screen_retriever_macos/macos`)
-  - sentry_flutter (from `Flutter/ephemeral/.symlinks/plugins/sentry_flutter/macos`)
   - share_plus (from `Flutter/ephemeral/.symlinks/plugins/share_plus/macos`)
   - shared_preferences_foundation (from `Flutter/ephemeral/.symlinks/plugins/shared_preferences_foundation/darwin`)
   - sqflite_darwin (from `Flutter/ephemeral/.symlinks/plugins/sqflite_darwin/darwin`)
@@ -90,7 +84,6 @@ SPEC REPOS:
   trunk:
     - HotKey
     - ReachabilitySwift
-    - Sentry
     - Sparkle
 
 EXTERNAL SOURCES:
@@ -126,8 +119,6 @@ EXTERNAL SOURCES:
     :path: Flutter/ephemeral/.symlinks/plugins/path_provider_foundation/darwin
   screen_retriever_macos:
     :path: Flutter/ephemeral/.symlinks/plugins/screen_retriever_macos/macos
-  sentry_flutter:
-    :path: Flutter/ephemeral/.symlinks/plugins/sentry_flutter/macos
   share_plus:
     :path: Flutter/ephemeral/.symlinks/plugins/share_plus/macos
   shared_preferences_foundation:
@@ -162,11 +153,9 @@ SPEC CHECKSUMS:
   path_provider_foundation: 2b6b4c569c0fb62ec74538f866245ac84301af46
   ReachabilitySwift: 32793e867593cfc1177f5d16491e3a197d2fccda
   screen_retriever_macos: 776e0fa5d42c6163d2bf772d22478df4b302b161
-  Sentry: 1fe34e9c2cbba1e347623610d26db121dcb569f1
-  sentry_flutter: a39c2a2d67d5e5b9cb0b94a4985c76dd5b3fc737
   share_plus: 1fa619de8392a4398bfaf176d441853922614e89
   shared_preferences_foundation: fcdcbc04712aee1108ac7fda236f363274528f78
-  Sparkle: 5f8960a7a119aa7d45dacc0d5837017170bc5675
+  Sparkle: 9c328bdcfbcaf8f030c4b678eadfd0fcb03822d8
   sqflite_darwin: 5a7236e3b501866c1c9befc6771dfd73ffb8702d
   super_native_extensions: 85efee3a7495b46b04befcfc86ed12069264ebf3
   url_launcher_macos: c82c93949963e55b228a30115bd219499a6fe404

@@ -63,7 +63,7 @@ class SettingsMenu extends StatelessWidget {
                     changeSelectedPage: changeSelectedPage,
                   ),
                   if (FeatureFlag.membersSettings.isOn &&
-                      userProfile.workspaceAuthType == AuthTypePB.Server)
+                      userProfile.workspaceType == WorkspaceTypePB.ServerW)
                     SettingsMenuElement(
                       page: SettingsPage.member,
                       selectedPage: currentPage,
@@ -105,11 +105,10 @@ class SettingsMenu extends StatelessWidget {
                     label: LocaleKeys.settings_aiPage_menuLabel.tr(),
                     icon: const FlowySvg(
                       FlowySvgs.settings_page_ai_m,
-                      size: Size.square(24),
                     ),
                     changeSelectedPage: changeSelectedPage,
                   ),
-                  if (userProfile.workspaceAuthType == AuthTypePB.Server)
+                  if (userProfile.workspaceType == WorkspaceTypePB.ServerW)
                     SettingsMenuElement(
                       page: SettingsPage.sites,
                       selectedPage: currentPage,
@@ -140,7 +139,10 @@ class SettingsMenu extends StatelessWidget {
                       page: SettingsPage.featureFlags,
                       selectedPage: currentPage,
                       label: 'Feature Flags',
-                      icon: const Icon(Icons.flag),
+                      icon: const Icon(
+                        Icons.flag,
+                        size: 20,
+                      ),
                       changeSelectedPage: changeSelectedPage,
                     ),
                 ],
