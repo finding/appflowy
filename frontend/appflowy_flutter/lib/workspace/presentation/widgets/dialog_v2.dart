@@ -36,16 +36,17 @@ Future<void> showSimpleAFDialog({
             AFModalHeader(
               leading: Text(
                 title,
-                style: theme.textStyle.heading4.standard(
+                style: theme.textStyle.heading4.prominent(
                   color: theme.textColorScheme.primary,
                 ),
               ),
               trailing: [
                 AFGhostButton.normal(
                   onTap: () => Navigator.of(context).pop(),
+                  padding: EdgeInsets.all(theme.spacing.xs),
                   builder: (context, isHovering, disabled) {
                     return FlowySvg(
-                      FlowySvgs.close_s,
+                      FlowySvgs.toast_close_s,
                       size: Size.square(20),
                     );
                   },
@@ -57,7 +58,12 @@ Future<void> showSimpleAFDialog({
                 // AFModalDimension.dialogHeight - header - footer
                 constraints: BoxConstraints(minHeight: 108.0),
                 child: AFModalBody(
-                  child: Text(content),
+                  child: Text(
+                    content,
+                    style: theme.textStyle.body.standard(
+                      color: theme.textColorScheme.primary,
+                    ),
+                  ),
                 ),
               ),
             ),
@@ -74,29 +80,18 @@ Future<void> showSimpleAFDialog({
                     },
                   ),
                 isDestructive
-                    ? AFFilledButton.destructive(
+                    ? AFFilledTextButton.destructive(
+                        text: primaryAction.$1,
                         onTap: () {
                           primaryAction.$2?.call(context);
                           Navigator.of(context).pop();
-                        },
-                        builder: (context, isHovering, disabled) {
-                          return Text(
-                            primaryAction.$1,
-                            style: TextStyle(
-                              color: AppFlowyTheme.of(context)
-                                  .textColorScheme
-                                  .onFill,
-                            ),
-                          );
                         },
                       )
-                    : AFFilledButton.primary(
+                    : AFFilledTextButton.primary(
+                        text: primaryAction.$1,
                         onTap: () {
                           primaryAction.$2?.call(context);
                           Navigator.of(context).pop();
-                        },
-                        builder: (context, isHovering, disabled) {
-                          return Text(primaryAction.$1);
                         },
                       ),
               ],

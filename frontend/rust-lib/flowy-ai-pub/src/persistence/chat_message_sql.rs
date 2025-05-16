@@ -1,16 +1,16 @@
 use crate::cloud::MessageCursor;
+use crate::cloud::chat_dto::ChatAuthorType;
 use client_api::entity::chat_dto::ChatMessage;
 use flowy_error::{FlowyError, FlowyResult};
 use flowy_sqlite::upsert::excluded;
 use flowy_sqlite::{
-  diesel, insert_into,
+  DBConnection, ExpressionMethods, Identifiable, Insertable, OptionalExtension, QueryResult,
+  Queryable, diesel, insert_into,
   query_dsl::*,
   schema::{chat_message_table, chat_message_table::dsl},
-  DBConnection, ExpressionMethods, Identifiable, Insertable, OptionalExtension, QueryResult,
-  Queryable,
 };
 
-#[derive(Queryable, Insertable, Identifiable)]
+#[derive(Queryable, Insertable, Identifiable, Debug)]
 #[diesel(table_name = chat_message_table)]
 #[diesel(primary_key(message_id))]
 pub struct ChatMessageTable {
@@ -40,6 +40,19 @@ impl ChatMessageTable {
   }
 }
 
+pub fn select_latest_user_message(
+  mut conn: DBConnection,
+  chat_id_val: &str,
+  auth_type: ChatAuthorType,
+) -> FlowyResult<ChatMessageTable> {
+  dsl::chat_message_table
+    .filter(chat_message_table::chat_id.eq(chat_id_val))
+    .filter(chat_message_table::author_type.eq(auth_type as i64))
+    .order(chat_message_table::created_at.desc())
+    .first::<ChatMessageTable>(&mut *conn)
+    .map_err(FlowyError::from)
+}
+
 pub fn update_chat_message_is_sync(
   mut conn: DBConnection,
   chat_id_val: &str,
@@ -59,6 +72,7 @@ pub fn upsert_chat_messages(
   mut conn: DBConnection,
   new_messages: &[ChatMessageTable],
 ) -> FlowyResult<()> {
+  //trace!("Upserting chat messages: {:?}", new_messages);
   conn.immediate_transaction(|conn| {
     for message in new_messages {
       let _ = insert_into(chat_message_table::table)

@@ -140,7 +140,7 @@ class SpacePermissionButton extends StatelessWidget {
 
     return FlowyButton(
       margin: const EdgeInsets.symmetric(horizontal: 14.0, vertical: 12.0),
-      radius: BorderRadius.circular(10),
+      radius: showArrow ? BorderRadius.circular(10) : BorderRadius.zero,
       iconPadding: 16.0,
       leftIcon: FlowySvg(icon),
       leftIconSize: const Size.square(20),
@@ -182,6 +182,7 @@ class SpaceCancelOrConfirmButton extends StatelessWidget {
   final String confirmButtonName;
   final Color? confirmButtonColor;
   final WidgetBuilder? confirmButtonBuilder;
+
   @override
   Widget build(BuildContext context) {
     final theme = AppFlowyTheme.of(context);
@@ -189,6 +190,7 @@ class SpaceCancelOrConfirmButton extends StatelessWidget {
       mainAxisAlignment: MainAxisAlignment.end,
       children: [
         AFOutlinedTextButton.normal(
+          size: UniversalPlatform.isDesktop ? AFButtonSize.m : AFButtonSize.l,
           text: LocaleKeys.button_cancel.tr(),
           textStyle: theme.textStyle.body.standard(
             color: theme.textColorScheme.primary,
@@ -335,6 +337,7 @@ class _ConfirmPopupState extends State<ConfirmPopup> {
 
   @override
   Widget build(BuildContext context) {
+    final theme = AppFlowyTheme.of(context);
     return KeyboardListener(
       focusNode: focusNode,
       autofocus: true,
@@ -353,24 +356,28 @@ class _ConfirmPopupState extends State<ConfirmPopup> {
         }
       },
       child: Container(
-        padding: const EdgeInsets.all(20),
-        color: UniversalPlatform.isDesktop
-            ? null
-            : Theme.of(context).colorScheme.surface,
+        decoration: BoxDecoration(
+          borderRadius: BorderRadius.circular(theme.borderRadius.xl),
+          color: AppFlowyTheme.of(context).surfaceColorScheme.primary,
+        ),
+        padding: EdgeInsets.symmetric(
+          horizontal: theme.spacing.xxl,
+          vertical: theme.spacing.xxl,
+        ),
         child: Column(
           mainAxisSize: MainAxisSize.min,
           crossAxisAlignment: CrossAxisAlignment.start,
           children: [
             _buildTitle(),
             if (widget.description.isNotEmpty) ...[
-              const VSpace(6),
+              VSpace(theme.spacing.l),
               _buildDescription(),
             ],
             if (widget.child != null) ...[
               const VSpace(12),
               widget.child!,
             ],
-            const VSpace(20),
+            VSpace(theme.spacing.xxl),
             _buildStyledButton(context),
           ],
         ),

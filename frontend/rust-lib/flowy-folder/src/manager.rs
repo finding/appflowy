@@ -1,45 +1,43 @@
 use crate::entities::icon::UpdateViewIconParams;
 use crate::entities::{
-  view_pb_with_child_views, view_pb_without_child_views, view_pb_without_child_views_from_arc,
   CreateViewParams, DeletedViewPB, DuplicateViewParams, FolderSnapshotPB, MoveNestedViewParams,
   RepeatedTrashPB, RepeatedViewIdPB, RepeatedViewPB, UpdateViewParams, ViewLayoutPB, ViewPB,
-  ViewSectionPB, WorkspaceLatestPB, WorkspacePB,
+  ViewSectionPB, WorkspaceLatestPB, WorkspacePB, view_pb_with_child_views,
+  view_pb_without_child_views, view_pb_without_child_views_from_arc,
 };
 use crate::manager_observer::{
-  notify_child_views_changed, notify_did_update_workspace, notify_parent_view_did_change,
-  ChildViewChangeReason,
+  ChildViewChangeReason, notify_child_views_changed, notify_did_update_workspace,
+  notify_parent_view_did_change,
 };
-use crate::notification::{
-  folder_notification_builder, send_current_workspace_notification, FolderNotification,
-};
+use crate::notification::{FolderNotification, folder_notification_builder};
 use crate::publish_util::{generate_publish_name, view_pb_to_publish_view};
 use crate::share::{ImportData, ImportItem, ImportParams};
 use crate::util::{folder_not_init_error, workspace_data_not_sync_error};
 use crate::view_operation::{
-  create_view, FolderOperationHandler, FolderOperationHandlers, GatherEncodedCollab, ViewData,
+  FolderOperationHandler, FolderOperationHandlers, GatherEncodedCollab, ViewData, create_view,
 };
 use arc_swap::ArcSwapOption;
-use client_api::entity::workspace_dto::PublishInfoView;
 use client_api::entity::PublishInfo;
-use collab::core::collab::DataSource;
+use client_api::entity::workspace_dto::PublishInfoView;
+use collab::core::collab::{DataSource, IndexContentReceiver};
 use collab::lock::RwLock;
 use collab_entity::{CollabType, EncodedCollab};
+use collab_folder::folder_diff::FolderViewChange;
 use collab_folder::hierarchy_builder::{ParentChildViews, ViewExtraBuilder};
 use collab_folder::{
   Folder, FolderData, FolderNotify, Section, SectionItem, TrashInfo, View, ViewLayout, ViewUpdate,
   Workspace,
 };
+use collab_integrate::CollabKVDB;
 use collab_integrate::collab_builder::{
   AppFlowyCollabBuilder, CollabBuilderConfig, CollabPersistenceImpl,
 };
-use collab_integrate::CollabKVDB;
-use flowy_error::{internal_error, ErrorCode, FlowyError, FlowyResult};
-use flowy_folder_pub::cloud::{gen_view_id, FolderCloudService, FolderCollabParams};
+use flowy_error::{ErrorCode, FlowyError, FlowyResult, internal_error};
+use flowy_folder_pub::cloud::{FolderCloudService, FolderCollabParams, gen_view_id};
 use flowy_folder_pub::entities::{
   PublishDatabaseData, PublishDatabasePayload, PublishDocumentPayload, PublishPayload,
   PublishViewInfo, PublishViewMeta, PublishViewMetaData,
 };
-use flowy_search_pub::entities::FolderIndexManager;
 use flowy_sqlite::kv::KVStorePreferences;
 use futures::future;
 use std::collections::HashMap;
@@ -64,8 +62,8 @@ pub struct FolderManager {
   pub(crate) user: Arc<dyn FolderUser>,
   pub(crate) operation_handlers: FolderOperationHandlers,
   pub cloud_service: Weak<dyn FolderCloudService>,
-  pub(crate) folder_indexer: Arc<dyn FolderIndexManager>,
   pub(crate) store_preferences: Arc<KVStorePreferences>,
+  pub(crate) folder_ready_notifier: tokio::sync::watch::Sender<bool>,
 }
 
 impl Drop for FolderManager {
@@ -79,20 +77,24 @@ impl FolderManager {
     user: Arc<dyn FolderUser>,
     collab_builder: Arc<AppFlowyCollabBuilder>,
     cloud_service: Weak<dyn FolderCloudService>,
-    folder_indexer: Arc<dyn FolderIndexManager>,
     store_preferences: Arc<KVStorePreferences>,
   ) -> FlowyResult<Self> {
+    let (folder_ready_notifier, _) = tokio::sync::watch::channel(false);
     let manager = Self {
       user,
       mutex_folder: Default::default(),
       collab_builder,
       operation_handlers: Default::default(),
       cloud_service,
-      folder_indexer,
       store_preferences,
+      folder_ready_notifier,
     };
 
     Ok(manager)
+  }
+
+  pub fn subscribe_folder_ready_notifier(&self) -> tokio::sync::watch::Receiver<bool> {
+    self.folder_ready_notifier.subscribe()
   }
 
   pub fn cloud_service(&self) -> FlowyResult<Arc<dyn FolderCloudService>> {
@@ -311,6 +313,43 @@ impl FolderManager {
     self.initialize_after_sign_in(uid, data_source).await
   }
 
+  pub async fn subscribe_folder_change_rx(&self) -> FlowyResult<IndexContentReceiver> {
+    let folder = self
+      .mutex_folder
+      .load_full()
+      .ok_or_else(folder_not_init_error)?;
+    let read_guard = folder.read().await;
+    Ok(read_guard.subscribe_index_content())
+  }
+
+  pub async fn consumer_recent_workspace_changes(&self) -> FlowyResult<Vec<FolderViewChange>> {
+    let folder = self
+      .mutex_folder
+      .load_full()
+      .ok_or_else(folder_not_init_error)?;
+    let workspace_id = self.user.workspace_id()?.to_string();
+    let encoded_collab = self
+      .store_preferences
+      .get_object::<EncodedCollab>(&workspace_id);
+
+    if encoded_collab.is_none() {
+      return Ok(vec![]);
+    }
+
+    let folder = folder.read().await;
+    let changes = folder.calculate_view_changes(encoded_collab.unwrap())?;
+
+    let encoded_collab = folder.encode_collab();
+    if let Ok(encoded) = encoded_collab {
+      let _ = self.store_preferences.set_object(&workspace_id, &encoded);
+    }
+    Ok(changes)
+  }
+
+  pub async fn on_workspace_deleted(&self, _uid: i64, _workspace_id: &Uuid) -> FlowyResult<()> {
+    Ok(())
+  }
+
   /// Initialize the folder for the new user.
   /// Using the [DefaultFolderBuilder] to create the default workspace for the new user.
   #[instrument(level = "info", skip_all, err)]
@@ -332,8 +371,7 @@ impl FolderManager {
       let result = self
         .cloud_service()?
         .get_folder_doc_state(workspace_id, user_id, CollabType::Folder, workspace_id)
-        .await
-        .map_err(FlowyError::from);
+        .await;
 
       match result {
         Ok(folder_doc_state) => {
@@ -1092,7 +1130,7 @@ impl FolderManager {
         return Err(
           FlowyError::record_not_found()
             .with_context(format!("Can't duplicate the view({})", view_id)),
-        )
+        );
       },
       Some(lock) => lock,
     };
@@ -1255,7 +1293,9 @@ impl FolderManager {
       workspace_id: workspace_id.to_string(),
       latest_view: view,
     };
-    send_current_workspace_notification(FolderNotification::DidUpdateWorkspaceSetting, setting);
+    folder_notification_builder(workspace_id, FolderNotification::DidUpdateWorkspaceSetting)
+      .payload(setting)
+      .send();
     Ok(())
   }
 
@@ -1326,7 +1366,7 @@ impl FolderManager {
           return Err(
             FlowyError::record_not_found()
               .with_context(format!("Can't find the view with ID: {}", view_id)),
-          )
+          );
         },
         Some(lock) => lock,
       };
@@ -1657,6 +1697,20 @@ impl FolderManager {
   #[tracing::instrument(level = "trace", skip(self))]
   pub(crate) async fn get_all_favorites(&self) -> Vec<SectionItem> {
     self.get_sections(Section::Favorite).await
+  }
+
+  pub async fn get_all_views(&self) -> FlowyResult<Vec<Arc<View>>> {
+    let lock = self
+      .mutex_folder
+      .load_full()
+      .ok_or_else(folder_not_init_error)?;
+    let views = lock
+      .read()
+      .await
+      .get_all_views()
+      .into_iter()
+      .collect::<Vec<_>>();
+    Ok(views)
   }
 
   #[tracing::instrument(level = "debug", skip(self))]
@@ -2038,15 +2092,6 @@ impl FolderManager {
       .into_iter()
       .filter(|id| !my_private_view_ids.contains(id))
       .collect()
-  }
-
-  pub async fn remove_indices_for_workspace(&self, workspace_id: &Uuid) -> FlowyResult<()> {
-    self
-      .folder_indexer
-      .remove_indices_for_workspace(*workspace_id)
-      .await?;
-
-    Ok(())
   }
 }
 

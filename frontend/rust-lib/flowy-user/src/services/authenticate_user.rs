@@ -9,7 +9,7 @@ use collab_plugins::local_storage::kv::KVTransactionDB;
 use flowy_error::{internal_error, ErrorCode, FlowyError, FlowyResult};
 use flowy_sqlite::kv::KVStorePreferences;
 use flowy_sqlite::DBConnection;
-use flowy_user_pub::entities::{AuthType, UserWorkspace};
+use flowy_user_pub::entities::{UserWorkspace, WorkspaceType};
 use flowy_user_pub::session::Session;
 use flowy_user_pub::sql::{select_user_workspace, select_user_workspace_type};
 use std::path::PathBuf;
@@ -58,7 +58,7 @@ impl AuthenticateUser {
     let session = self.get_session()?;
     let mut conn = self.get_sqlite_connection(session.user_id)?;
     let workspace_type = select_user_workspace_type(&session.workspace_id, &mut conn)?;
-    Ok(matches!(workspace_type, AuthType::Local))
+    Ok(matches!(workspace_type, WorkspaceType::Local))
   }
 
   pub fn device_id(&self) -> FlowyResult<String> {
@@ -69,6 +69,13 @@ impl AuthenticateUser {
     let session = self.get_session()?;
     let workspace_uuid = Uuid::from_str(&session.workspace_id)?;
     Ok(workspace_uuid)
+  }
+
+  pub fn workspace_type(&self) -> FlowyResult<WorkspaceType> {
+    let session = self.get_session()?;
+    let mut conn = self.get_sqlite_connection(session.user_id)?;
+    let workspace_type = select_user_workspace_type(&session.workspace_id, &mut conn)?;
+    Ok(workspace_type)
   }
 
   pub fn workspace_database_object_id(&self) -> FlowyResult<Uuid> {
@@ -89,7 +96,7 @@ impl AuthenticateUser {
 
   pub fn get_index_path(&self) -> FlowyResult<PathBuf> {
     let uid = self.user_id()?;
-    Ok(PathBuf::from(self.user_paths.user_data_dir(uid)).join("indexes"))
+    Ok(self.user_paths.tanvity_index_path(uid))
   }
 
   pub fn get_user_data_dir(&self) -> FlowyResult<PathBuf> {

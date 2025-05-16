@@ -1,4 +1,4 @@
-use crate::migrations::session_migration::{get_session_workspace, migrate_session};
+use crate::migrations::session_migration::{get_v0_session_workspace, migrate_session};
 
 use crate::services::data_import::importer::load_collab_by_object_ids;
 use crate::services::db::UserDBPath;
@@ -57,7 +57,6 @@ pub(crate) struct ImportedFolder {
 #[derive(Clone)]
 pub(crate) enum ImportedSource {
   ExternalFolder,
-  AnonUser,
 }
 
 impl ImportedFolder {
@@ -109,7 +108,7 @@ pub(crate) fn prepare_import(
   {
     Ok(w) => w.database_storage_id,
     Err(_) => {
-      let session_workspace = get_session_workspace(&other_store_preferences)
+      let session_workspace = get_v0_session_workspace(&other_store_preferences)
         .ok_or(anyhow!("Can't find the session workspace"))?;
       session_workspace.workspace_database_id
     },
@@ -189,7 +188,6 @@ pub(crate) fn generate_import_data(
       None => workspace_id.to_string(),
       Some(_) => gen_view_id().to_string(),
     },
-    ImportedSource::AnonUser => workspace_id.to_string(),
   };
 
   let (views, orphan_views) = user_collab_db.with_write_txn(|current_collab_db_write_txn| {
@@ -359,7 +357,6 @@ pub(crate) fn generate_import_data(
           Ok((child_views, orphan_views))
         },
       },
-      ImportedSource::AnonUser => Ok((child_views, orphan_views)),
     }?;
 
     if !invalid_orphan_views.is_empty() {
@@ -400,7 +397,6 @@ pub(crate) fn generate_import_data(
 
   let source = match imported_folder.source {
     ImportedSource::ExternalFolder => ImportFrom::AppFlowyDataFolder,
-    ImportedSource::AnonUser => ImportFrom::AnonUser,
   };
 
   Ok(ImportedAppFlowyData {
