@@ -3,7 +3,8 @@ import 'dart:async';
 import 'package:appflowy/plugins/trash/application/trash_listener.dart';
 import 'package:appflowy/plugins/trash/application/trash_service.dart';
 import 'package:appflowy/workspace/application/command_palette/search_service.dart';
-import 'package:appflowy_backend/protobuf/flowy-folder/trash.pb.dart';
+import 'package:appflowy/workspace/application/view/view_service.dart';
+import 'package:appflowy_backend/protobuf/flowy-folder/protobuf.dart';
 import 'package:appflowy_backend/protobuf/flowy-search/result.pb.dart';
 import 'package:bloc/bloc.dart';
 import 'package:flutter/foundation.dart';
@@ -39,8 +40,11 @@ class CommandPaletteBloc
     on<_ClearSearch>(_onClearSearch);
     on<_GoingToAskAI>(_onGoingToAskAI);
     on<_AskedAI>(_onAskedAI);
+    on<_RefreshCachedViews>(_onRefreshCachedViews);
+    on<_UpdateCachedViews>(_onUpdateCachedViews);
 
     _initTrash();
+    _refreshCachedViews();
   }
 
   final Debouncer _searchDebouncer = Debouncer(
@@ -49,7 +53,6 @@ class CommandPaletteBloc
   final TrashService _trashService = TrashService();
   final TrashListener _trashListener = TrashListener();
   String? _activeQuery;
-  String? _workspaceId;
 
   @override
   Future<void> close() {
@@ -77,6 +80,34 @@ class CommandPaletteBloc
       },
       (error) => debugPrint('Failed to load trash: $error'),
     );
+  }
+
+  Future<void> _refreshCachedViews() async {
+    /// Sometimes non-existent views appear in the search results
+    /// and the icon data for the search results is empty
+    /// Fetching all views can temporarily resolve these issues
+    final repeatedViewPB =
+        (await ViewBackendService.getAllViews()).toNullable();
+    if (repeatedViewPB == null || isClosed) return;
+    add(CommandPaletteEvent.updateCachedViews(views: repeatedViewPB.items));
+  }
+
+  FutureOr<void> _onRefreshCachedViews(
+    _RefreshCachedViews event,
+    Emitter<CommandPaletteState> emit,
+  ) {
+    _refreshCachedViews();
+  }
+
+  FutureOr<void> _onUpdateCachedViews(
+    _UpdateCachedViews event,
+    Emitter<CommandPaletteState> emit,
+  ) {
+    final cachedViews = <String, ViewPB>{};
+    for (final view in event.views) {
+      cachedViews[view.id] = view;
+    }
+    emit(state.copyWith(cachedViews: cachedViews));
   }
 
   FutureOr<void> _onSearchChanged(
@@ -115,7 +146,6 @@ class CommandPaletteBloc
       unawaited(
         SearchBackendService.performSearch(
           event.search,
-          workspaceId: _workspaceId,
         ).then(
           (result) => result.fold(
             (stream) {
@@ -161,6 +191,7 @@ class CommandPaletteBloc
       onServerItems: (items, searchId, searching, generatingAIOverview) =>
           _handleResultsUpdate(
         searchId: searchId,
+        summaries: [], // when got server search result, summaries should be empty
         serverItems: items,
         searching: searching,
         generatingAIOverview: generatingAIOverview,
@@ -263,7 +294,6 @@ class CommandPaletteBloc
     _WorkspaceChanged event,
     Emitter<CommandPaletteState> emit,
   ) {
-    _workspaceId = event.workspaceId;
     emit(
       state.copyWith(
         query: '',
@@ -275,6 +305,7 @@ class CommandPaletteBloc
         generatingAIOverview: false,
       ),
     );
+    _refreshCachedViews();
   }
 
   FutureOr<void> _onClearSearch(
@@ -288,14 +319,14 @@ class CommandPaletteBloc
     _GoingToAskAI event,
     Emitter<CommandPaletteState> emit,
   ) {
-    emit(state.copyWith(askAI: true));
+    emit(state.copyWith(askAI: true, askAISources: event.sources));
   }
 
   FutureOr<void> _onAskedAI(
     _AskedAI event,
     Emitter<CommandPaletteState> emit,
   ) {
-    emit(state.copyWith(askAI: false));
+    emit(state.copyWith(askAI: false, askAISources: null));
   }
 
   bool _isActiveSearch(String searchId) =>
@@ -327,8 +358,14 @@ class CommandPaletteEvent with _$CommandPaletteEvent {
     @Default(null) String? workspaceId,
   }) = _WorkspaceChanged;
   const factory CommandPaletteEvent.clearSearch() = _ClearSearch;
-  const factory CommandPaletteEvent.gointToAskAI() = _GoingToAskAI;
+  const factory CommandPaletteEvent.goingToAskAI({
+    @Default(null) List<SearchSourcePB>? sources,
+  }) = _GoingToAskAI;
   const factory CommandPaletteEvent.askedAI() = _AskedAI;
+  const factory CommandPaletteEvent.refreshCachedViews() = _RefreshCachedViews;
+  const factory CommandPaletteEvent.updateCachedViews({
+    required List<ViewPB> views,
+  }) = _UpdateCachedViews;
 }
 
 class SearchResultItem {
@@ -355,11 +392,13 @@ class CommandPaletteState with _$CommandPaletteState {
     @Default([]) List<SearchResponseItemPB> serverResponseItems,
     @Default([]) List<LocalSearchResponseItemPB> localResponseItems,
     @Default({}) Map<String, SearchResultItem> combinedResponseItems,
+    @Default({}) Map<String, ViewPB> cachedViews,
     @Default([]) List<SearchSummaryPB> resultSummaries,
     @Default(null) SearchResponseStream? searchResponseStream,
     required bool searching,
     required bool generatingAIOverview,
     @Default(false) bool askAI,
+    @Default(null) List<SearchSourcePB>? askAISources,
     @Default([]) List<TrashPB> trash,
     @Default(null) String? searchId,
   }) = _CommandPaletteState;

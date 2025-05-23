@@ -25,14 +25,13 @@ use tracing::{debug, error, event, info, instrument, warn};
 use uuid::Uuid;
 
 use crate::entities::{AuthStateChangedPB, AuthStatePB, UserProfilePB, UserSettingPB};
-use crate::event_map::{DefaultUserStatusCallback, UserStatusCallback};
+use crate::event_map::{AppLifeCycle, DefaultUserStatusCallback};
 use crate::migrations::document_empty_content::HistoricalEmptyDocumentMigration;
 use crate::migrations::migration::{
   save_migration_record, UserDataMigration, UserLocalDataMigration, FIRST_TIME_INSTALL_VERSION,
 };
 use crate::migrations::workspace_and_favorite_v1::FavoriteV1AndWorkspaceArrayMigration;
 use crate::migrations::workspace_trash_v1::WorkspaceTrashMapToSectionMigration;
-use crate::migrations::AnonUser;
 use crate::services::authenticate_user::AuthenticateUser;
 use crate::services::cloud_config::get_cloud_config;
 use crate::services::collab_interact::{DefaultCollabInteract, UserReminder};
@@ -47,7 +46,7 @@ pub struct UserManager {
   pub(crate) cloud_service: Weak<dyn UserCloudServiceProvider>,
   pub(crate) store_preferences: Arc<KVStorePreferences>,
   pub(crate) user_awareness_by_workspace: DashMap<Uuid, Arc<RwLock<UserAwareness>>>,
-  pub(crate) user_status_callback: RwLock<Arc<dyn UserStatusCallback>>,
+  pub app_life_cycle: RwLock<Arc<dyn AppLifeCycle>>,
   pub(crate) collab_builder: Weak<AppFlowyCollabBuilder>,
   pub(crate) collab_interact: RwLock<Arc<dyn UserReminder>>,
   pub(crate) user_workspace_service: Arc<dyn UserWorkspaceService>,
@@ -70,7 +69,7 @@ impl UserManager {
     authenticate_user: Arc<AuthenticateUser>,
     user_workspace_service: Arc<dyn UserWorkspaceService>,
   ) -> Arc<Self> {
-    let user_status_callback: RwLock<Arc<dyn UserStatusCallback>> =
+    let user_status_callback: RwLock<Arc<dyn AppLifeCycle>> =
       RwLock::new(Arc::new(DefaultUserStatusCallback));
 
     let refresh_user_profile_since = AtomicI64::new(0);
@@ -78,7 +77,7 @@ impl UserManager {
       cloud_service: cloud_services,
       store_preferences,
       user_awareness_by_workspace: Default::default(),
-      user_status_callback,
+      app_life_cycle: user_status_callback,
       collab_builder,
       collab_interact: RwLock::new(Arc::new(DefaultCollabInteract)),
       authenticate_user,
@@ -135,13 +134,13 @@ impl UserManager {
   /// the function will set up the collaboration configuration and initialize the user's awareness. Upon successful
   /// completion, a user status callback is invoked to signify that the initialization process is complete.
   #[instrument(level = "debug", skip_all, err)]
-  pub async fn init_with_callback<C: UserStatusCallback + 'static, I: UserReminder>(
+  pub async fn init_with_callback<C: AppLifeCycle + 'static, I: UserReminder>(
     &self,
     user_status_callback: C,
     collab_interact: I,
   ) -> Result<(), FlowyError> {
-    let user_status_callback = Arc::new(user_status_callback);
-    *self.user_status_callback.write().await = user_status_callback.clone();
+    let app_life_cycle = Arc::new(user_status_callback);
+    *self.app_life_cycle.write().await = app_life_cycle.clone();
     *self.collab_interact.write().await = Arc::new(collab_interact);
     let cloud_service = self.cloud_service()?;
 
@@ -152,9 +151,28 @@ impl UserManager {
       );
       let workspace_uuid = Uuid::parse_str(&session.workspace_id)?;
       let mut conn = self.db_connection(session.user_id)?;
-      let auth_type = select_user_workspace_type(&session.workspace_id, &mut conn)?;
+      let workspace_type =
+        select_user_workspace_type(&session.workspace_id, &mut conn).or_else(|err| {
+          // Anonymous workspaces aren’t yet recorded in user_workspace_table,
+          // so calling select_user_workspace_type(...) will Err for anon users.
+          // As a temporary workaround, if we detect the current user is anonymous,
+          // we force the workspace type to WorkspaceType::Local.
+          // In the upcoming run_data_migration, we’ll insert proper anon‐user records
+          // and can remove this special case.
+          if self
+            .get_anon_user_id()
+            .ok()
+            .filter(|&anon_id| anon_id == session.user_id)
+            .is_some()
+          {
+            Ok(WorkspaceType::Local)
+          } else {
+            Err(err)
+          }
+        })?;
 
       let uid = session.user_id;
+      let auth_type = AuthType::from(workspace_type);
       let token = self.token_from_auth_type(&auth_type)?;
       cloud_service.set_server_auth_type(&auth_type, token.clone())?;
 
@@ -162,7 +180,7 @@ impl UserManager {
         tracing::Level::INFO,
         "init user session: {}, auth type: {:?}",
         uid,
-        auth_type,
+        workspace_type,
       );
 
       self.prepare_user(&session).await;
@@ -278,17 +296,18 @@ impl UserManager {
           session.user_id,
           &session.user_uuid,
           &workspace_uuid,
-          &auth_type,
+          &workspace_type,
         )
         .await;
 
-      user_status_callback
+      app_life_cycle
         .on_launch_if_authenticated(
           uid,
           &cloud_config,
           &workspace_uuid,
-          &self.authenticate_user.user_config.device_id,
-          &auth_type,
+          &self.authenticate_user.user_config,
+          &self.authenticate_user.user_paths,
+          &workspace_type,
         )
         .await?;
     } else {
@@ -371,18 +390,19 @@ impl UserManager {
         session.user_id,
         &session.user_uuid,
         &workspace_id,
-        &user_profile.workspace_auth_type,
+        &user_profile.workspace_type,
       )
       .await;
     self
-      .user_status_callback
+      .app_life_cycle
       .read()
       .await
       .on_sign_in(
         user_profile.uid,
         &workspace_id,
-        &self.authenticate_user.user_config.device_id,
-        &auth_type,
+        &self.authenticate_user.user_config,
+        &self.authenticate_user.user_paths,
+        &user_profile.workspace_type,
       )
       .await?;
     send_auth_state_notification(AuthStateChangedPB {
@@ -408,13 +428,11 @@ impl UserManager {
     let cloud_service = self.cloud_service()?;
     cloud_service.set_server_auth_type(&auth_type, None)?;
 
-    // sign out the current user if there is one
-    let migration_user = self.get_migration_user(&auth_type).await;
     let auth_service = cloud_service.get_user_service()?;
     let response: AuthResponse = auth_service.sign_up(params).await?;
     let new_user_profile = UserProfile::from((&response, &auth_type));
     self
-      .continue_sign_up(&new_user_profile, migration_user, response, &auth_type)
+      .continue_sign_up(&new_user_profile, response, &auth_type)
       .await?;
     Ok(new_user_profile)
   }
@@ -423,35 +441,35 @@ impl UserManager {
   async fn continue_sign_up(
     &self,
     new_user_profile: &UserProfile,
-    migration_user: Option<AnonUser>,
     response: AuthResponse,
     auth_type: &AuthType,
   ) -> FlowyResult<()> {
     let new_session = Session::from(&response);
     let workspace_id = Uuid::parse_str(&new_session.workspace_id)?;
-    self.prepare_user(&new_session).await;
     self
       .save_auth_data(&response, *auth_type, &new_session)
       .await?;
+    self.prepare_user(&new_session).await;
     let _ = self
       .initial_user_awareness(
         new_session.user_id,
         &new_session.user_uuid,
         &workspace_id,
-        auth_type,
+        &new_user_profile.workspace_type,
       )
       .await;
     let workspace_id = Uuid::parse_str(&new_session.workspace_id)?;
     self
-      .user_status_callback
+      .app_life_cycle
       .read()
       .await
       .on_sign_up(
         response.is_new_user,
         new_user_profile,
         &workspace_id,
-        &self.authenticate_user.user_config.device_id,
-        auth_type,
+        &self.authenticate_user.user_config,
+        &self.authenticate_user.user_paths,
+        &new_user_profile.workspace_type,
       )
       .await?;
 
@@ -465,23 +483,6 @@ impl UserManager {
         mark_all_migrations_as_applied(&pool);
       } else {
         error!("Failed to get pool for user {}", new_session.user_id);
-      }
-
-      if let Some(old_user) = migration_user {
-        event!(
-          tracing::Level::INFO,
-          "Migrate anon user data from {:?} to {:?}",
-          old_user.session.user_id,
-          new_user_profile.uid
-        );
-        self
-          .migrate_anon_user_data_to_cloud(&old_user, &new_session, auth_type)
-          .await?;
-        self.remove_anon_user();
-        let _ = self
-          .authenticate_user
-          .database
-          .close(old_user.session.user_id);
       }
     }
 
@@ -581,7 +582,7 @@ impl UserManager {
     workspace_id: &str,
   ) -> FlowyResult<()> {
     // If the user is a local user, no need to refresh the user profile
-    if old_user_profile.workspace_auth_type.is_local() {
+    if old_user_profile.workspace_type.is_local() {
       return Ok(());
     }
 
@@ -778,7 +779,8 @@ impl UserManager {
     }
 
     let mut conn = self.db_connection(uid)?;
-    sync_user_workspaces_with_diff(uid, auth_type, response.user_workspaces(), &mut conn)?;
+    let workspace_type = WorkspaceType::from(&auth_type);
+    sync_user_workspaces_with_diff(uid, workspace_type, response.user_workspaces(), &mut conn)?;
     info!(
       "Save new user profile to disk, authenticator: {:?}",
       auth_type
@@ -808,28 +810,6 @@ impl UserManager {
 
     Ok(())
   }
-
-  async fn migrate_anon_user_data_to_cloud(
-    &self,
-    old_user: &AnonUser,
-    _new_user_session: &Session,
-    auth_type: &AuthType,
-  ) -> Result<(), FlowyError> {
-    let old_collab_db = self
-      .authenticate_user
-      .database
-      .get_collab_db(old_user.session.user_id)?
-      .upgrade()
-      .ok_or_else(FlowyError::ref_drop)?;
-
-    if auth_type == &AuthType::AppFlowyCloud {
-      self
-        .migration_anon_user_on_appflowy_cloud_sign_up(old_user, &old_collab_db)
-        .await?;
-    }
-
-    Ok(())
-  }
 }
 
 pub fn upsert_user_profile_change(
@@ -845,7 +825,7 @@ pub fn upsert_user_profile_change(
   );
   update_user_profile(&mut conn, changeset)?;
   let user = select_user_profile(uid, workspace_id, &mut conn)?;
-  send_notification(&uid.to_string(), UserNotification::DidUpdateUserProfile)
+  send_notification(uid, UserNotification::DidUpdateUserProfile)
     .payload(UserProfilePB::from(user))
     .send();
   Ok(())

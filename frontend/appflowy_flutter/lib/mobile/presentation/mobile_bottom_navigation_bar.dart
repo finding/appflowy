@@ -6,10 +6,10 @@ import 'package:appflowy/generated/locale_keys.g.dart';
 import 'package:appflowy/mobile/presentation/notifications/mobile_notifications_screen.dart';
 import 'package:appflowy/mobile/presentation/widgets/navigation_bar_button.dart';
 import 'package:appflowy/shared/popup_menu/appflowy_popup_menu.dart';
-import 'package:appflowy/shared/red_dot.dart';
 import 'package:appflowy/startup/startup.dart';
 import 'package:appflowy/user/application/reminder/reminder_bloc.dart';
 import 'package:appflowy/util/theme_extension.dart';
+import 'package:appflowy/workspace/presentation/notifications/number_red_dot.dart';
 import 'package:appflowy/workspace/presentation/widgets/dialogs.dart';
 import 'package:appflowy_backend/protobuf/flowy-folder/view.pb.dart';
 import 'package:appflowy_editor/appflowy_editor.dart';
@@ -18,6 +18,9 @@ import 'package:flowy_infra_ui/flowy_infra_ui.dart';
 import 'package:flutter/material.dart';
 import 'package:flutter_bloc/flutter_bloc.dart';
 import 'package:go_router/go_router.dart';
+
+import 'home/mobile_home_page.dart';
+import 'search/mobile_search_page.dart';
 
 enum BottomNavigationBarActionType {
   home,
@@ -38,6 +41,14 @@ enum BottomNavigationBarItemType {
   notification;
 
   String get label => name;
+  String? get routeName {
+    return switch (this) {
+      home => MobileHomeScreen.routeName,
+      search => MobileSearchScreen.routeName,
+      notification => MobileNotificationsScreenV2.routeName,
+      add => null,
+    };
+  }
 
   ValueKey get valueKey {
     return ValueKey(label);
@@ -175,23 +186,28 @@ class _NotificationNavigationBarItemIcon extends StatelessWidget {
           final hasUnreads = state.reminders.any(
             (reminder) => !reminder.isRead,
           );
-          return Stack(
-            children: [
-              isActive
-                  ? const FlowySvg(
-                      FlowySvgs.m_home_active_notification_m,
-                      blendMode: null,
-                    )
-                  : const FlowySvg(
-                      FlowySvgs.m_home_notification_m,
-                    ),
-              if (hasUnreads)
-                const Positioned(
-                  top: 2,
-                  right: 4,
-                  child: NotificationRedDot(),
+          return SizedBox(
+            width: 40,
+            height: 40,
+            child: Stack(
+              children: [
+                Center(
+                  child: isActive
+                      ? const FlowySvg(
+                          FlowySvgs.m_home_active_notification_m,
+                          blendMode: null,
+                        )
+                      : const FlowySvg(
+                          FlowySvgs.m_home_notification_m,
+                        ),
                 ),
-            ],
+                if (hasUnreads)
+                  const Align(
+                    alignment: Alignment.topRight,
+                    child: NumberedRedDot.mobile(),
+                  ),
+              ],
+            ),
           );
         },
       ),

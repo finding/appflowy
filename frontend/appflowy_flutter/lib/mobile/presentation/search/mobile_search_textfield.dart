@@ -1,9 +1,14 @@
 import 'package:appflowy/generated/flowy_svgs.g.dart';
 import 'package:appflowy/generated/locale_keys.g.dart';
 import 'package:appflowy/mobile/presentation/mobile_bottom_navigation_bar.dart';
+import 'package:appflowy/shared/popup_menu/appflowy_popup_menu.dart';
+import 'package:appflowy/startup/startup.dart';
+import 'package:appflowy/user/application/reminder/reminder_bloc.dart';
+import 'package:appflowy_backend/log.dart';
 import 'package:appflowy_ui/appflowy_ui.dart';
 import 'package:easy_localization/easy_localization.dart';
 import 'package:flutter/material.dart';
+import 'package:go_router/go_router.dart';
 
 class MobileSearchTextfield extends StatefulWidget {
   const MobileSearchTextfield({
@@ -11,11 +16,13 @@ class MobileSearchTextfield extends StatefulWidget {
     this.onChanged,
     required this.hintText,
     required this.query,
+    required this.focusNode,
   });
 
   final String hintText;
   final String query;
   final ValueChanged<String>? onChanged;
+  final FocusNode focusNode;
 
   @override
   State<MobileSearchTextfield> createState() => _MobileSearchTextfieldState();
@@ -23,18 +30,16 @@ class MobileSearchTextfield extends StatefulWidget {
 
 class _MobileSearchTextfieldState extends State<MobileSearchTextfield> {
   late final TextEditingController controller;
-  late final FocusNode focusNode;
   final ValueNotifier<bool> hasFocusValueNotifier = ValueNotifier(true);
+
+  FocusNode get focusNode => widget.focusNode;
+  late String lastPage = bottomNavigationBarItemType.value ?? '';
 
   @override
   void initState() {
     super.initState();
     controller = TextEditingController(text: widget.query);
-    focusNode = FocusNode();
-    focusNode.addListener(() {
-      if (!mounted) return;
-      hasFocusValueNotifier.value = focusNode.hasFocus;
-    });
+    focusNode.addListener(onFocusChanged);
     controller.addListener(() {
       if (!mounted) return;
       widget.onChanged?.call(controller.text);
@@ -46,7 +51,7 @@ class _MobileSearchTextfieldState extends State<MobileSearchTextfield> {
   @override
   void dispose() {
     controller.dispose();
-    focusNode.dispose();
+    focusNode.removeListener(onFocusChanged);
     hasFocusValueNotifier.dispose();
     bottomNavigationBarItemType.removeListener(onBackOrLeave);
     super.dispose();
@@ -55,14 +60,50 @@ class _MobileSearchTextfieldState extends State<MobileSearchTextfield> {
   @override
   Widget build(BuildContext context) {
     final theme = AppFlowyTheme.of(context);
-    return SizedBox(
-      height: 40,
+    return Container(
+      height: 42,
+      margin: EdgeInsets.symmetric(vertical: 8),
+      padding: EdgeInsets.only(left: 4, right: 16),
       child: ValueListenableBuilder(
         valueListenable: controller,
         builder: (context, _, __) {
           final hasText = controller.text.isNotEmpty;
           return Row(
             children: [
+              GestureDetector(
+                onTap: () {
+                  if (lastPage.isEmpty) return;
+                  // close the popup menu
+                  closePopupMenu();
+                  try {
+                    BottomNavigationBarItemType label =
+                        BottomNavigationBarItemType.values.byName(lastPage);
+                    if (label == BottomNavigationBarItemType.search) {
+                      label = BottomNavigationBarItemType.home;
+                    }
+                    if (label == BottomNavigationBarItemType.notification) {
+                      getIt<ReminderBloc>().add(const ReminderEvent.refresh());
+                    }
+                    bottomNavigationBarItemType.value = label.label;
+                    final routeName = label.routeName;
+                    if (routeName != null) GoRouter.of(context).go(routeName);
+                  } on ArgumentError {
+                    Log.error(
+                      'lastPage: [$lastPage] cannot be converted to BottomNavigationBarItemType',
+                    );
+                  }
+                },
+                child: SizedBox.square(
+                  dimension: 40,
+                  child: Center(
+                    child: FlowySvg(
+                      FlowySvgs.search_page_arrow_left_m,
+                      size: Size.square(20),
+                      color: theme.iconColorScheme.primary,
+                    ),
+                  ),
+                ),
+              ),
               Expanded(
                 child: TextFormField(
                   autovalidateMode: AutovalidateMode.onUserInteraction,
@@ -85,12 +126,17 @@ class _MobileSearchTextfieldState extends State<MobileSearchTextfield> {
                   if (!hasFocus || !hasText) return SizedBox.shrink();
                   return GestureDetector(
                     onTap: () => focusNode.unfocus(),
-                    child: Padding(
+                    behavior: HitTestBehavior.opaque,
+                    child: Container(
+                      height: 42,
                       padding: EdgeInsets.only(left: 8),
-                      child: Text(
-                        LocaleKeys.button_cancel.tr(),
-                        style: theme.textStyle.body
-                            .standard(color: theme.textColorScheme.action),
+                      child: Align(
+                        alignment: Alignment.centerLeft,
+                        child: Text(
+                          LocaleKeys.button_cancel.tr(),
+                          style: theme.textStyle.body
+                              .standard(color: theme.textColorScheme.action),
+                        ),
                       ),
                     ),
                   );
@@ -108,7 +154,7 @@ class _MobileSearchTextfieldState extends State<MobileSearchTextfield> {
     final showCancelIcon = controller.text.isNotEmpty;
     final border = OutlineInputBorder(
       borderRadius: BorderRadius.all(Radius.circular(10.0)),
-      borderSide: BorderSide(color: theme.borderColorScheme.greyTertiary),
+      borderSide: BorderSide(color: theme.borderColorScheme.primary),
     );
     final enableBorder = border.copyWith(
       borderSide: BorderSide(color: theme.borderColorScheme.themeThick),
@@ -127,9 +173,9 @@ class _MobileSearchTextfieldState extends State<MobileSearchTextfield> {
       border: border,
       enabledBorder: border,
       focusedBorder: enableBorder,
-      prefixIconConstraints: BoxConstraints.loose(Size(34, 40)),
+      prefixIconConstraints: BoxConstraints.loose(Size(38, 40)),
       prefixIcon: Padding(
-        padding: const EdgeInsets.fromLTRB(8, 10, 4, 10),
+        padding: const EdgeInsets.fromLTRB(8, 10, 8, 10),
         child: FlowySvg(
           FlowySvgs.m_home_search_icon_m,
           color: theme.iconColorScheme.secondary,
@@ -146,10 +192,9 @@ class _MobileSearchTextfieldState extends State<MobileSearchTextfield> {
               child: Padding(
                 padding: const EdgeInsets.fromLTRB(4, 10, 8, 10),
                 child: FlowySvg(
-                  FlowySvgs.clear_s,
-                  blendMode: null,
+                  FlowySvgs.search_clear_m,
                   color: theme.iconColorScheme.tertiary,
-                  size: Size.square(20),
+                  size: const Size.square(20),
                 ),
               ),
             )
@@ -157,12 +202,19 @@ class _MobileSearchTextfieldState extends State<MobileSearchTextfield> {
     );
   }
 
+  void onFocusChanged() {
+    if (!mounted) return;
+    hasFocusValueNotifier.value = focusNode.hasFocus;
+  }
+
   void onBackOrLeave() {
     final label = bottomNavigationBarItemType.value;
     if (label == BottomNavigationBarItemType.search.label) {
       focusNode.requestFocus();
     } else {
+      focusNode.unfocus();
       controller.clear();
+      lastPage = label ?? '';
     }
   }
 }

@@ -1,13 +1,13 @@
 import 'package:appflowy/generated/flowy_svgs.g.dart';
 import 'package:appflowy/generated/locale_keys.g.dart';
 import 'package:appflowy/mobile/application/mobile_router.dart';
+import 'package:appflowy/mobile/presentation/search/mobile_search_special_styles.dart';
 import 'package:appflowy/shared/icon_emoji_picker/tab.dart';
 import 'package:appflowy/workspace/application/command_palette/command_palette_bloc.dart';
-import 'package:appflowy/workspace/application/command_palette/search_result_list_bloc.dart';
 import 'package:appflowy/workspace/application/recent/recent_views_bloc.dart';
-import 'package:appflowy/workspace/application/view/view_service.dart';
+import 'package:appflowy/workspace/presentation/widgets/dialogs.dart';
+import 'package:appflowy_backend/log.dart';
 import 'package:appflowy_backend/protobuf/flowy-folder/view.pb.dart';
-import 'package:appflowy_result/appflowy_result.dart';
 import 'package:appflowy_ui/appflowy_ui.dart';
 import 'package:easy_localization/easy_localization.dart';
 import 'package:flowy_infra_ui/widget/spacing.dart';
@@ -35,39 +35,42 @@ class MobileSearchRecentList extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
-    final theme = AppFlowyTheme.of(context);
+    final commandPaletteState = context.read<CommandPaletteBloc>().state;
+
+    final trashIdSet = commandPaletteState.trash.map((e) => e.id).toSet();
     return BlocProvider(
       create: (context) =>
           RecentViewsBloc()..add(const RecentViewsEvent.initial()),
       child: BlocBuilder<RecentViewsBloc, RecentViewsState>(
         builder: (context, state) {
-          final List<ViewPB> recentViews =
-              state.views.map((e) => e.item).toSet().toList();
-          return SingleChildScrollView(
-            child: Column(
-              crossAxisAlignment: CrossAxisAlignment.start,
-              children: [
-                const VSpace(16),
-                Text(
-                  LocaleKeys.sideBar_recent.tr(),
-                  style: theme.textStyle.body
-                      .enhanced(color: theme.textColorScheme.secondary),
-                ),
-                const VSpace(4),
-                Column(
-                  children: List.generate(recentViews.length, (index) {
-                    final view = recentViews[index];
-                    return GestureDetector(
-                      behavior: HitTestBehavior.opaque,
-                      onTap: () => _goToView(context, view),
-                      child: MobileSearchResultCell(
-                        item: view.toSearchResultItem(),
-                      ),
-                    );
-                  }),
-                ),
-              ],
-            ),
+          final List<ViewPB> recentViews = state.views
+              .map((e) => e.item)
+              .where((e) => !trashIdSet.contains(e.id))
+              .toList();
+          return Column(
+            crossAxisAlignment: CrossAxisAlignment.start,
+            mainAxisSize: MainAxisSize.min,
+            children: [
+              const VSpace(16),
+              Text(
+                LocaleKeys.sideBar_recent.tr(),
+                style: context.searchSubtitleStyle,
+              ),
+              const VSpace(4),
+              Column(
+                mainAxisSize: MainAxisSize.min,
+                children: List.generate(recentViews.length, (index) {
+                  final view = recentViews[index];
+                  return GestureDetector(
+                    behavior: HitTestBehavior.opaque,
+                    onTap: () => _goToView(context, view),
+                    child: MobileSearchResultCell(
+                      item: view.toSearchResultItem(),
+                    ),
+                  );
+                }),
+              ),
+            ],
           );
         },
       ),
@@ -75,27 +78,8 @@ class MobileSearchRecentList extends StatelessWidget {
   }
 }
 
-class MobileSearchResultList extends StatefulWidget {
+class MobileSearchResultList extends StatelessWidget {
   const MobileSearchResultList({super.key});
-
-  @override
-  State<MobileSearchResultList> createState() => _MobileSearchResultListState();
-}
-
-class _MobileSearchResultListState extends State<MobileSearchResultList> {
-  late final SearchResultListBloc bloc;
-
-  @override
-  void initState() {
-    super.initState();
-    bloc = SearchResultListBloc();
-  }
-
-  @override
-  void dispose() {
-    bloc.close();
-    super.dispose();
-  }
 
   @override
   Widget build(BuildContext context) {
@@ -107,46 +91,55 @@ class _MobileSearchResultListState extends State<MobileSearchResultList> {
     if (isSearching && !hasData) {
       return Center(child: CircularProgressIndicator.adaptive());
     } else if (!hasData) {
-      return buildNoResult(state.query ?? '');
+      return buildNoResult(state.query ?? '', theme);
     }
-    return SingleChildScrollView(
-      child: Column(
-        crossAxisAlignment: CrossAxisAlignment.start,
-        children: [
-          const VSpace(16),
-          Text(
-            LocaleKeys.search_bestMatch.tr(),
-            style: theme.textStyle.body
-                .enhanced(color: theme.textColorScheme.secondary),
-          ),
-          const VSpace(4),
-          Column(
-            children: List.generate(items.length, (index) {
-              final item = items[index];
-              return GestureDetector(
-                behavior: HitTestBehavior.opaque,
-                onTap: () async {
-                  final view = await ViewBackendService.getView(item.id)
-                      .fold((s) => s, (s) => null);
-                  if (view != null && context.mounted) {
-                    await _goToView(context, view);
-                  }
-                },
-                child: MobileSearchResultCell(
-                  item: item,
-                  query: state.query,
-                ),
-              );
-            }),
-          ),
-        ],
-      ),
+    return Column(
+      crossAxisAlignment: CrossAxisAlignment.start,
+      mainAxisSize: MainAxisSize.min,
+      children: [
+        const VSpace(16),
+        Text(
+          LocaleKeys.commandPalette_bestMatches.tr(),
+          style: context.searchSubtitleStyle,
+        ),
+        const VSpace(4),
+        ListView.separated(
+          shrinkWrap: true,
+          physics: const NeverScrollableScrollPhysics(),
+          itemBuilder: (context, index) {
+            final item = items[index];
+            final view = state.cachedViews[item.id];
+            return GestureDetector(
+              behavior: HitTestBehavior.opaque,
+              onTap: () async {
+                if (view != null && context.mounted) {
+                  await _goToView(context, view);
+                } else {
+                  showToastNotification(
+                    message: LocaleKeys.search_somethingWentWrong.tr(),
+                    type: ToastificationType.error,
+                  );
+                  Log.error(
+                    'tapping search result, view not found: ${item.id}',
+                  );
+                }
+              },
+              child: MobileSearchResultCell(
+                item: item,
+                view: view,
+                query: state.query,
+              ),
+            );
+          },
+          separatorBuilder: (context, index) => AFDivider(),
+          itemCount: items.length,
+        ),
+      ],
     );
   }
 
-  Widget buildNoResult(String query) {
-    final theme = AppFlowyTheme.of(context),
-        textColor = theme.textColorScheme.secondary;
+  Widget buildNoResult(String query, AppFlowyThemeData theme) {
+    final textColor = theme.textColorScheme.secondary;
     return Align(
       alignment: Alignment.topCenter,
       child: SizedBox(
@@ -161,12 +154,13 @@ class _MobileSearchResultListState extends State<MobileSearchResultList> {
             ),
             const VSpace(12),
             Text(
-              LocaleKeys.search_noResultForSearching.tr(args: [query]),
+              LocaleKeys.search_noResultForSearching.tr(),
               style: theme.textStyle.body.enhanced(color: textColor),
               maxLines: 1,
               overflow: TextOverflow.ellipsis,
             ),
             Text(
+              textAlign: TextAlign.center,
               LocaleKeys.search_noResultForSearchingHint.tr(),
               style: theme.textStyle.caption.standard(color: textColor),
             ),

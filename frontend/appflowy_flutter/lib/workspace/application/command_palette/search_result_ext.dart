@@ -3,21 +3,43 @@ import 'package:appflowy/plugins/document/presentation/editor_plugins/header/emo
 import 'package:appflowy/shared/icon_emoji_picker/flowy_icon_emoji_picker.dart';
 import 'package:appflowy_backend/protobuf/flowy-search/result.pb.dart';
 import 'package:flutter/material.dart';
+import 'package:universal_platform/universal_platform.dart';
 
 extension GetIcon on ResultIconPB {
-  Widget? getIcon({double size = 18.0, double lineHeight = 1.0}) {
+  Widget? getIcon({
+    double size = 18.0,
+    double lineHeight = 1.0,
+    Color? iconColor,
+  }) {
     final iconValue = value, iconType = ty;
     if (iconType == ResultIconTypePB.Emoji) {
-      return iconValue.isNotEmpty
-          ? RawEmojiIconWidget(
-              emoji: EmojiIconData(iconType.toFlowyIconType(), iconValue),
-              emojiSize: size,
-              lineHeight: lineHeight,
-            )
-          : null;
-    } else if (ty == ResultIconTypePB.Icon) {
+      if (iconValue.isEmpty) return null;
+      if (UniversalPlatform.isMobile) {
+        return Text(
+          iconValue,
+          strutStyle: StrutStyle(
+            fontSize: size,
+            height: lineHeight,
+
+            /// currently [forceStrutHeight] set to true seems only work in iOS
+            forceStrutHeight: UniversalPlatform.isIOS,
+            leadingDistribution: TextLeadingDistribution.even,
+          ),
+        );
+      }
+      return RawEmojiIconWidget(
+        emoji: EmojiIconData.emoji(iconValue),
+        emojiSize: size,
+        lineHeight: lineHeight,
+      );
+    } else if (iconType == ResultIconTypePB.Icon ||
+        iconType == ResultIconTypePB.Url) {
       if (_resultIconValueTypes.contains(iconValue)) {
-        return FlowySvg(getViewSvg(), size: Size.square(size));
+        return FlowySvg(
+          getViewSvg(),
+          size: Size.square(size),
+          color: iconColor,
+        );
       }
       return RawEmojiIconWidget(
         emoji: EmojiIconData(iconType.toFlowyIconType(), iconValue),
